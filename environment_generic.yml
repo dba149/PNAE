@@ -1,0 +1,16 @@
+name: dsa_wrangling
+channels:
+  - conda-forge
+dependencies:
+  - pip
+  - setuptools[version='<70.0.0']
+  - ydata-profiling
+  - numpy[version='<2.0']
+  - python=3.12
+  - ipywidgets
+  - jupyterlab
+  - pandas
+  - scikit-learn
+  - pyod
+  - missingno
+prefix: /home/eti/miniforge3/envs/dsa_wrangling
