@@ -393,7 +393,7 @@ def _apresentacao(doc, dados: dict):
         "garantindo simultaneamente: cobertura nutricional mínima por grupo, diversidade "
         "semanal de alimentos in natura, oferta obrigatória de frutas, legumes e verduras, "
         "restrições de frequência mensal de grupos alimentares e cumprimento da meta de "
-        "45 % de aquisição da Agricultura Familiar sobre o valor total das compras."
+        "45% de aquisição da Agricultura Familiar sobre o valor total das compras."
     )
     run2 = p2.add_run(txt2)
     run2.font.size = Pt(11)
@@ -473,7 +473,7 @@ def _cardapio_grupo_mes(doc, dados: dict, grupo: str, mes: int):
         p_ind.paragraph_format.space_after = Pt(6)
         for txt, negrito in [
             (f"Custo total do mês: R$ {custo_mes:.4f}/aluno  ", True),
-            (f"|  AF: {pct_af:.1f} %  ", False),
+            (f"|  AF: {pct_af:.1f}%  ", False),
             (f"|  {n_alim} alimentos distintos", False),
         ]:
             run = p_ind.add_run(txt)
@@ -671,10 +671,10 @@ def _secao_af(doc, dados: dict):
     p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     p.paragraph_format.space_after = Pt(8)
     run = p.add_run(
-        "A Lei nº 11.947/2009 (Art. 14) estabelece que no mínimo 30 % dos recursos "
+        "A Resolução CD/FNDE nº 4/2026 estabelece que no mínimo 45% dos recursos "
         "repassados pelo FNDE devem ser utilizados na aquisição de produtos da "
         "Agricultura Familiar. Este projeto adota como meta operacional o percentual "
-        "de 45 %, conforme orientação FNDE 2026, incorporado como restrição hard "
+        "de 45%, conforme orientação FNDE 2026, incorporado como restrição fundamental "
         "no modelo de otimização (Restrição R27)."
     )
     run.font.size = Pt(11)
@@ -764,7 +764,7 @@ def _secao_instrucoes(doc):
         "Substituições de alimentos dentro do mesmo grupo nutricional são permitidas desde "
         "que: (1) o alimento substituto possua composição nutricional equivalente ou "
         "superior; (2) o preço de referência não supere o do alimento substituído em "
-        "mais de 20 %; (3) a flag de AF seja mantida quando o original era AF."
+        "mais de 20%; (3) a flag de AF seja mantida quando o original era AF."
     )
     run2.font.size = Pt(11)
     run2.font.name = "Times New Roman"
@@ -781,7 +781,7 @@ def _secao_instrucoes(doc):
         ("Sódio — período integral 3+ refeições",   "≤ 1.400 mg por dia"),
         ("Diversidade — 1 refeição/dia",            "≥ 10 alimentos in natura/semana"),
         ("Diversidade — 3+ refeições/dia",          "≥ 23 alimentos in natura/semana"),
-        ("Agricultura Familiar",                    "≥ 45 % do custo total (meta FNDE 2026)"),
+        ("Agricultura Familiar",                    "≥ 45% do custo total (FNDE 2026)"),
     ]
     tbl = doc.add_table(rows=1, cols=2)
     tbl.style = "Table Grid"

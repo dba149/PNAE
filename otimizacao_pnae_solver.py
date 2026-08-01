@@ -62,7 +62,7 @@ DIAS_UTEIS_MES   = 20   # 4 semanas × 5 dias letivos
 SEMANAS_MES      = 4
 DIAS_SEMANA      = 5
 M_BIG            = 600.0  # Big-M para vinculação x ↔ y (g máximo por item/dia)
-EPS_MIN_G        = 5.0    # Quantidade mínima se o alimento for selecionado (g)
+EPS_MIN_G        = 10.0    # Quantidade mínima se o alimento for selecionado (g)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -368,7 +368,9 @@ class PerfilNutricional:
     max_margarina_mes   : int = 2
     # Agricultura Familiar
     pct_af_meta    : float = 0.45
-    pct_af_legal   : float = 0.30
+    # CORREÇÃO (jul/2026): Lei nº 15.226/2025 elevou o mínimo legal de
+    # Agricultura Familiar de 30% para 45%, vigente desde jan/2026.
+    pct_af_legal   : float = 0.45
 
 
 def montar_perfil(grupo: str, df_params: pd.DataFrame, restricoes: dict) -> PerfilNutricional:
@@ -384,14 +386,29 @@ def montar_perfil(grupo: str, df_params: pd.DataFrame, restricoes: dict) -> Perf
     pct   = float(row.get("pct_nutricional", 0.20))
     sodio = float(row.get("sodio_max_mg", 600))
 
-    # Determinar período e refeições a partir do nome do grupo
-    periodo = "integral" if "integral" in grupo or "creche_int" in grupo else "parcial"
-    if "integral" in grupo:
-        n_ref = 3
-    elif "2" in grupo or "2_ref" in grupo:
-        n_ref = 2
-    else:
-        n_ref = 1
+    # ═════════════════════════════════════════════════════════════════════
+    # CORREÇÃO (jul/2026): período e nº de refeições eram adivinhados por
+    # substring no NOME do grupo (ex.: "integral" in grupo, "2" in grupo),
+    # totalmente desconectado do valor real de num_refeicoes vindo do CSV.
+    # Como nomes de grupo no dataset atual são 'CRECHE', 'FUND_11_15',
+    # 'PRE_ESCOLA' etc. (sem a palavra "integral" nem dígito "2"), TODO grupo
+    # caía no fallback n_ref=1 / periodo="parcial" — mesmo quando a linha em
+    # df_params tinha num_refeicoes=3 (ex.: CRECHE com 3 refeições era
+    # tratada como periodo="parcial", 1 refeição, para fins de FLV semanal,
+    # frequência de frutas/legumes e limites mensais de biscoito/lácteos/
+    # preparações doces/margarina — todos calculados com o valor errado).
+    #
+    # A diversidade mínima (`diversidade_min`) NÃO era afetada por esse bug
+    # específico, pois seu cálculo já usava `pct` (correto), e não este
+    # `n_ref` local — por isso pode ter parecido "23" corretamente ao lado
+    # de um "Refeições/dia" exibido errado (1) na mesma tabela-resumo.
+    #
+    # Correção: usar num_refeicoes diretamente da linha de df_params (já
+    # correto, propagado por otimizacao_pnae_regras.ipynb) para determinar
+    # tanto n_ref quanto periodo.
+    # ═════════════════════════════════════════════════════════════════════
+    n_ref   = int(row.get("num_refeicoes", 1))
+    periodo = "integral" if n_ref >= 3 else "parcial"
 
     # FLV semanal
     flv_g = restricoes["flv_semana_gramas"][periodo]
@@ -402,9 +419,9 @@ def montar_perfil(grupo: str, df_params: pd.DataFrame, restricoes: dict) -> Perf
 
     # Diversidade mínima
     div_map = restricoes["diversidade_minima_alimentos"]
-    if pct >= 0.70 or n_ref == 3:
+    if pct >= 0.70:
         div_min = div_map["cardapio_3_refeicoes_ou_70pct"]
-    elif pct >= 0.30 or n_ref == 2:
+    elif pct >= 0.30:
         div_min = div_map["cardapio_2_refeicoes_ou_30pct"]
     else:
         div_min = div_map["cardapio_1_refeicao_ou_20pct"]
@@ -626,6 +643,23 @@ def construir_e_resolver(
 
     # ── R14: Diversidade mínima de alimentos in natura/min. proc. por semana ──
     # Regra: diversidade mínima SEMANAL → aplicada a cada uma das 4 semanas
+    # ═════════════════════════════════════════════════════════════════════
+    # CORREÇÃO (jul/2026): z_s[j] só tinha limite INFERIOR (z_s >= y[j][d]),
+    # que força z_s=1 quando o alimento é usado, mas nada impedia o solver de
+    # também colocar z_s=1 para alimentos NUNCA usados naquela semana
+    # (y[j][d]=0 em todos os dias). Como z_s não aparece na função objetivo
+    # nem em mais nenhuma restrição, a forma mais barata de satisfazer
+    # "soma de z_s >= diversidade_min" era simplesmente ligar 23 z_s "no
+    # papel", sem custo e sem qualquer alimento real correspondente — a
+    # restrição de diversidade era satisfeita apenas formalmente, enquanto o
+    # cardápio real (definido por x/y) continuava sendo resolvido só pelas
+    # restrições de custo/nutrição, resultando em poucos alimentos distintos
+    # (ex.: 6) repetidos todos os dias.
+    #
+    # Correção: adicionar o limite SUPERIOR que faltava — z_s[j] só pode ser
+    # 1 se o alimento for de fato usado em pelo menos um dia daquela semana —
+    # fechando a folga que permitia "diversidade fictícia".
+    # ═════════════════════════════════════════════════════════════════════
     for s in S:
         dias_s = [s * DIAS_SEMANA + k for k in range(DIAS_SEMANA)]
         # z_s[j] = 1 se alimento j aparece em algum dia da semana s
@@ -633,6 +667,7 @@ def construir_e_resolver(
         for j in range(N):
             for d in dias_s:
                 modelo += z_s[j] >= y[j][d], f"R13b_zs_{j}_{s}_{d}"
+            modelo += z_s[j] <= lpSum(y[j][d] for d in dias_s), f"R13c_zs_upper_{j}_{s}"
         modelo += (
             lpSum(z_s[j] for j in range(N) if fl_in[j]) >= perfil.diversidade_min,
             f"R14_diversidade_s{s}"
@@ -794,14 +829,23 @@ def construir_e_resolver(
         for d in D:
             sol[j, d] = value(x[j][d]) or 0.0
 
+    # CORREÇÃO (jul/2026): quando valor_medio_dia é matematicamente igual ao
+    # limite, a comparação `pct_r >= 100` (ou `valor_dia <= limite`) podia
+    # falhar por ruído de ponto flutuante típico de solução MILP (o CBC pode
+    # retornar, p.ex., 19.999999998 em vez de 20.0 exato), fazendo o relatório
+    # marcar ❌ para casos que são, na prática, exatamente 100% de atingimento
+    # (ex.: Gorduras mín, Sódio máx, Cálcio). Introduzida tolerância relativa
+    # de 1e-6 (compatível com a precisão numérica do CBC) para essa comparação.
+    _TOL = 1e-6
+
     def _ating(vec, minimo, nome, unidade, tipo="min"):
         valor_dia = float(np.dot(vec / 100, sol.mean(axis=1)))  # média diária
         limite    = minimo
         pct_r     = valor_dia / limite * 100 if limite and limite > 0 else None
         if tipo == "max":
-            ok = valor_dia <= limite
+            ok = valor_dia <= limite * (1 + _TOL) + _TOL
         else:
-            ok = (pct_r or 0) >= 100
+            ok = (pct_r or 0) >= 100 * (1 - _TOL) - _TOL
         return {"nutriente": nome, "valor_medio_dia": round(valor_dia, 3),
                 "limite": limite, "unidade": unidade,
                 "pct_atingido": round(pct_r, 1) if pct_r else "N/D",
