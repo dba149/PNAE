@@ -64,6 +64,15 @@ DIAS_SEMANA      = 5
 M_BIG            = 600.0  # Big-M para vinculação x ↔ y (g máximo por item/dia)
 EPS_MIN_G        = 10.0    # Quantidade mínima se o alimento for selecionado (g)
 
+# CORREÇÃO (ago/2026): valor de 'restricao_pnae' (alimentos_elegiveis_otimizador.csv,
+# Módulo 1) que identifica alimentos com "Oferta limitada para > 3 anos e proibida
+# para ≤ 3 anos" — conforme Resolução CD/FNDE nº 4/2026, §8º do art. correspondente
+# ("É proibida a oferta de alimentos ultraprocessados e a adição de açúcar, mel e
+# adoçante nas preparações culinárias e bebidas para as crianças até três anos de
+# idade"). Usado para excluir esses alimentos apenas nas instâncias do grupo CRECHE
+# (todo aluno de creche tem ≤ 3 anos). Valor confirmado por Daniela Barreto Araújo.
+RESTRICAO_PROIBIDA_MENOR_3_ANOS = "Oferta limitada para > 3 anos e proibida para ≤ 3 anos"
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1. CARREGAMENTO DE DADOS
@@ -335,7 +344,8 @@ class PerfilNutricional:
     Encapsula todos os parâmetros de restrição para um grupo nutricional.
     Carregado a partir de parametros_nutricionais_solver.csv e restricoes_pnae.json.
     """
-    grupo          : str
+    grupo          : str          # identificador de instância, ex.: 'CRECHE_3REF'
+    grupo_base     : str          # nome do grupo em df_params, ex.: 'CRECHE'
     num_refeicoes  : int
     periodo        : str          # 'parcial' ou 'integral'
     pct_cobertura  : float
@@ -373,14 +383,43 @@ class PerfilNutricional:
     pct_af_legal   : float = 0.45
 
 
-def montar_perfil(grupo: str, df_params: pd.DataFrame, restricoes: dict) -> PerfilNutricional:
+def montar_perfil(
+    grupo: str, num_refeicoes: int, df_params: pd.DataFrame, restricoes: dict
+) -> PerfilNutricional:
     """
-    Constrói um PerfilNutricional a partir do grupo nutricional solicitado.
+    Constrói um PerfilNutricional a partir do par (grupo nutricional, num_refeicoes).
+
+    CORREÇÃO (ago/2026): df_params tem uma linha por escola (CO_ENTIDADE ×
+    grupo_nutricional), e escolas do mesmo grupo podem ter num_refeicoes
+    diferentes (ex.: CRECHE parcial=2 vs. integral=3; PRE_ESCOLA 1, 2 ou 3).
+    Filtrar só por 'grupo_nutricional' e pegar a primeira linha (.iloc[0])
+    selecionava arbitrariamente UMA dessas variantes — dependendo da ordem do
+    CSV — e a outra nunca era resolvida pelo solver. A chave de busca agora é
+    o par (grupo_nutricional, num_refeicoes); cada combinação existente em
+    df_params vira uma instância própria do solver (ver resolver_todos()).
+    Os valores nutricionais para um mesmo par são idênticos entre escolas
+    (vêm da tabela de referência FNDE/Plan PNAE, não de cálculo por escola —
+    confirmado por Daniela Barreto Araújo), portanto o .iloc[0] após o filtro
+    composto é seguro.
     """
-    row = df_params[df_params["grupo_nutricional"] == grupo]
+    row = df_params[
+        (df_params["grupo_nutricional"] == grupo)
+        & (df_params["num_refeicoes"] == num_refeicoes)
+    ]
     if row.empty:
-        disponiveis = df_params["grupo_nutricional"].unique().tolist()
-        raise ValueError(f"Grupo '{grupo}' não encontrado. Disponíveis: {disponiveis}")
+        disponiveis = (
+            df_params[df_params["grupo_nutricional"] == grupo]["num_refeicoes"]
+            .unique().tolist()
+        )
+        if disponiveis:
+            raise ValueError(
+                f"Grupo '{grupo}' não possui num_refeicoes={num_refeicoes}. "
+                f"Combinações disponíveis para este grupo: {disponiveis}"
+            )
+        raise ValueError(
+            f"Grupo '{grupo}' não encontrado. "
+            f"Disponíveis: {df_params['grupo_nutricional'].unique().tolist()}"
+        )
     row = row.iloc[0]
 
     pct   = float(row.get("pct_nutricional", 0.20))
@@ -478,7 +517,8 @@ def montar_perfil(grupo: str, df_params: pd.DataFrame, restricoes: dict) -> Perf
                 if periodo == "integral" else lm["margarina_parcial_vezes_mes"])
 
     return PerfilNutricional(
-        grupo=grupo,
+        grupo=f"{grupo}_{n_ref}REF",
+        grupo_base=grupo,
         num_refeicoes=n_ref,
         periodo=periodo,
         pct_cobertura=pct,
@@ -554,6 +594,36 @@ def construir_e_resolver(
         z[j]   ∈ {0,1}  alimento j aparece em algum dia do mês (para diversidade)
     """
     import time as _time
+
+    # ═════════════════════════════════════════════════════════════════════
+    # CORREÇÃO (ago/2026): alimentos com restricao_pnae ==
+    # "Oferta limitada para > 3 anos e proibida para ≤ 3 anos" (Módulo 1)
+    # nunca eram excluídos do solver — só a categoria "Aquisição proibida"
+    # era filtrada, de forma global, em preparar_dataset_solver(). Como
+    # todo aluno de CRECHE tem ≤ 3 anos, esses alimentos precisam ser
+    # proibidos especificamente nas instâncias desse grupo (§ da Resolução
+    # CD/FNDE nº 4/2026: proibida a adição de açúcar, mel, adoçante e a
+    # oferta de ultraprocessados para crianças até 3 anos). Alimentos
+    # açúcar/mel/adoçante como itens autônomos já são tratados à parte via
+    # is_ingrediente (Módulo 1) — este filtro cobre os demais itens
+    # marcados com essa restrição etária na planilha original do PNAE.
+    # ═════════════════════════════════════════════════════════════════════
+    if perfil.grupo_base == "CRECHE":
+        if "restricao_pnae" in df.columns:
+            n_antes = len(df)
+            df = df[df["restricao_pnae"] != RESTRICAO_PROIBIDA_MENOR_3_ANOS].copy()
+            df = df.reset_index(drop=True)
+            n_removidos = n_antes - len(df)
+            log.info(
+                "Filtro etário (%s, ≤3 anos): %d alimento(s) excluído(s) por "
+                "restrição de idade (restricao_pnae)", perfil.grupo, n_removidos,
+            )
+        else:
+            log.warning(
+                "Coluna 'restricao_pnae' ausente — filtro etário de creche (≤3 anos) "
+                "NÃO aplicado para %s. Verifique alimentos_elegiveis_otimizador.csv.",
+                perfil.grupo,
+            )
 
     J = list(df.index)
     N = len(J)
@@ -919,13 +989,16 @@ def resolver_todos(
     time_limit: int = 180,
 ) -> list[ResultadoSolver]:
     """
-    Resolve o MILP para todas as combinações (grupo × mês).
+    Resolve o MILP para todas as combinações (grupo × num_refeicoes × mês).
     Salva resultados parciais a cada instância resolvida.
 
     Parameters
     ----------
     dados        : dict retornado por carregar_bases()
-    grupos       : lista de grupos a processar (None = todos disponíveis)
+    grupos       : lista de grupos-base a processar (None = todos disponíveis).
+                   Cada grupo é expandido para todos os num_refeicoes presentes
+                   em df_params para aquele grupo (ex.: 'CRECHE' → CRECHE_2REF
+                   e CRECHE_3REF, se ambas existirem nos dados).
     meses        : lista de meses (None = MESES_LETIVOS)
     output_folder: pasta de saída
     time_limit   : tempo máximo por instância (segundos)
@@ -935,23 +1008,49 @@ def resolver_todos(
     df_params  = dados["params"]
     df_saz     = dados.get("sazonalidade", pd.DataFrame())
 
-    grupos_disp = df_params["grupo_nutricional"].unique().tolist()
-    grupos_proc = grupos or grupos_disp
-    meses_proc  = meses or MESES_LETIVOS
+    # ═════════════════════════════════════════════════════════════════════
+    # CORREÇÃO (ago/2026): um mesmo grupo_nutricional (ex.: CRECHE, PRE_ESCOLA)
+    # pode ter mais de um valor de num_refeicoes entre as escolas (CRECHE:
+    # parcial=2 ou integral=3; PRE_ESCOLA: 1, 2 ou 3). Antes, o orquestrador
+    # iterava só sobre o nome do grupo, e montar_perfil() pegava uma linha
+    # arbitrária de df_params — só UMA variante de refeições por grupo era
+    # de fato resolvida. Agora a unidade de instância é o par
+    # (grupo_nutricional, num_refeicoes), descoberto automaticamente a
+    # partir das combinações reais presentes em df_params (sem lista
+    # hardcoded). '--grupos' continua filtrando pelo nome-base do grupo e
+    # é expandido aqui para todas as combinações de refeições daquele grupo.
+    # ═════════════════════════════════════════════════════════════════════
+    pares_disp = sorted(
+        set(map(tuple, df_params[["grupo_nutricional", "num_refeicoes"]].values.tolist()))
+    )
+    grupos_disp = sorted({g for g, _ in pares_disp})
 
-    log.info("Grupos a processar : %s", grupos_proc)
+    if grupos:
+        pares_proc = [(g, n) for g, n in pares_disp if g in grupos]
+        nao_encontrados = set(grupos) - {g for g, _ in pares_proc}
+        if nao_encontrados:
+            log.warning(
+                "Grupo(s) não encontrado(s) em df_params, ignorados: %s. "
+                "Disponíveis: %s", sorted(nao_encontrados), grupos_disp,
+            )
+    else:
+        pares_proc = pares_disp
+
+    meses_proc = meses or MESES_LETIVOS
+
+    log.info("Instâncias (grupo × refeições) a processar: %s", pares_proc)
     log.info("Meses a processar  : %s", [NOMES_MESES[m] for m in meses_proc])
-    log.info("Total de instâncias: %d", len(grupos_proc) * len(meses_proc))
+    log.info("Total de instâncias: %d", len(pares_proc) * len(meses_proc))
 
     resultados = []
     linhas_cardapio_all = []
     linhas_conf_all     = []
 
-    for grupo in grupos_proc:
+    for grupo_base, n_ref in pares_proc:
         try:
-            perfil = montar_perfil(grupo, df_params, restricoes)
+            perfil = montar_perfil(grupo_base, n_ref, df_params, restricoes)
         except ValueError as e:
-            log.error("Grupo '%s' ignorado: %s", grupo, e)
+            log.error("Instância '%s_%sREF' ignorada: %s", grupo_base, n_ref, e)
             continue
 
         for mes in meses_proc:
@@ -960,7 +1059,7 @@ def resolver_todos(
 
             res = construir_e_resolver(
                 df_mes, perfil, mes,
-                nome_instancia=f"PNAE_{grupo}_{mes:02d}",
+                nome_instancia=f"PNAE_{perfil.grupo}_{mes:02d}",
                 time_limit=time_limit,
             )
             resultados.append(res)
@@ -969,7 +1068,7 @@ def resolver_todos(
                 linhas_cardapio_all.append(res.cardapio)
             if not res.conformidade.empty:
                 conf_c = res.conformidade.copy()
-                conf_c["grupo"] = grupo
+                conf_c["grupo"] = perfil.grupo  # identificador de instância (ex.: CRECHE_3REF)
                 conf_c["mes"]   = mes
                 linhas_conf_all.append(conf_c)
 
@@ -1049,7 +1148,11 @@ if __name__ == "__main__":
     parser.add_argument("--output", default="./data/output/",
                         help="Pasta de saída dos módulos anteriores (default: ./data/output/)")
     parser.add_argument("--grupos", nargs="*", default=None,
-                        help="Grupos a processar (default: todos). Ex: FUND_6_10 CRECHE")
+                        help="Grupos-base a processar (default: todos). Cada grupo é "
+                             "expandido automaticamente para todas as combinações de "
+                             "num_refeicoes presentes nos dados (ex.: CRECHE gera "
+                             "CRECHE_2REF e CRECHE_3REF, se ambas existirem). "
+                             "Ex: FUND_6_10 CRECHE")
     parser.add_argument("--meses", nargs="*", type=int, default=None,
                         help="Meses a processar (default: 2-12, jan excluído). Ex: 3 9")
     parser.add_argument("--time-limit", type=int, default=180,

@@ -78,7 +78,7 @@ NOMES_MESES = {
 }
 
 LABELS_GRUPOS = {
-    "CRECHE"         : "Creche (período integral)",
+    "CRECHE"         : "Creche",
     "PRE_ESCOLA"     : "Pré-escola",
     "FUND_6_10"      : "Ensino Fundamental I (6–10 anos)",
     "FUND_11_15"     : "Ensino Fundamental II (11–15 anos)",
@@ -87,6 +87,52 @@ LABELS_GRUPOS = {
     "FUND_11_15_AEE" : "Fund. II — AEE",
     "EJA_AEE"        : "EJA — AEE",
 }
+
+# CORREÇÃO (ago/2026): o solver agora resolve cada combinação (grupo ×
+# num_refeicoes) como uma instância própria — ex.: 'CRECHE_2REF' (parcial)
+# e 'CRECHE_3REF' (integral) deixam de ser uma única linha 'CRECHE' e
+# passam a aparecer separadamente em cardapio_mensal_todos_grupos.csv,
+# conformidade_nutricional_todos.csv e sumario_otimizacao_todos.csv.
+# Antes, LABELS_GRUPOS["CRECHE"] assumia "período integral" fixo — o que já
+# era impreciso mesmo antes desta mudança, já que o solver podia estar
+# resolvendo silenciosamente a variante parcial. Os rótulos por período
+# abaixo são explícitos por grupo e por num_refeicoes; a semântica
+# parcial/integral (2=parcial, 3=integral p/ creche; 1 e 2=parcial, 3=
+# integral p/ pré-escola) foi confirmada por Daniela Barreto Araújo. Para os
+# demais grupos, sem semântica parcial/integral definida, o rótulo genérico
+# "X refeição(ões)/dia" é usado — ajustar aqui se o orientador confirmar uma
+# nomenclatura específica para Fund. I/II, EJA e AEE.
+_ROTULOS_PERIODO_ESPECIAL = {
+    "CRECHE": {
+        2: "período parcial — 2 refeições/dia",
+        3: "período integral — 3 refeições/dia",
+    },
+    "PRE_ESCOLA": {
+        1: "período parcial — 1 refeição/dia",
+        2: "período parcial — 2 refeições/dia",
+        3: "período integral — 3 refeições/dia",
+    },
+}
+
+import re as _re
+
+def _label_grupo(codigo: str) -> str:
+    """
+    Traduz um identificador de instância do solver (ex.: 'CRECHE_3REF') no
+    rótulo legível para o relatório (ex.: 'Creche (período integral — 3
+    refeições/dia)'). Códigos sem sufixo '_NREF' (formatos antigos ou
+    grupos não expandidos) caem no comportamento anterior via LABELS_GRUPOS.
+    """
+    m = _re.match(r"^(.+)_(\d)REF$", str(codigo))
+    if not m:
+        return LABELS_GRUPOS.get(codigo, codigo)
+    base, n_ref = m.group(1), int(m.group(2))
+    nome_base = LABELS_GRUPOS.get(base, base)
+    _plural = "refeição/dia" if n_ref == 1 else "refeições/dia"
+    sufixo = _ROTULOS_PERIODO_ESPECIAL.get(base, {}).get(
+        n_ref, f"{n_ref} {_plural}"
+    )
+    return f"{nome_base} ({sufixo})"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -432,7 +478,7 @@ def _apresentacao(doc, dados: dict):
     for i, row in resumo_grupos.iterrows():
         fundo = HEX_VERDE_CLARO if i % 2 == 0 else HEX_BRANCO
         tr = tbl.add_row()
-        label = LABELS_GRUPOS.get(row["grupo"], row["grupo"])
+        label = _label_grupo(row["grupo"])
         _celula_dado(tr.cells[0], label,                    fundo, negrito=True)
         _celula_dado(tr.cells[1], int(row["meses"]),        fundo, alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
         ok = row["status"] == "Optimal"
@@ -459,7 +505,7 @@ def _cardapio_grupo_mes(doc, dados: dict, grupo: str, mes: int):
         return
 
     nome_mes   = NOMES_MESES.get(mes, str(mes))
-    label_grupo = LABELS_GRUPOS.get(grupo, grupo)
+    label_grupo = _label_grupo(grupo)
     custo_mes  = df_gm["custo_r"].sum()
     custo_af   = df_gm.loc[df_gm["af"].astype(str).str.lower() == "true", "custo_r"].sum()
     pct_af     = custo_af / custo_mes * 100 if custo_mes > 0 else 0
@@ -590,7 +636,7 @@ def _secao_cardapios(doc, dados: dict):
     doc.add_paragraph()
 
     for grupo in dados["grupos"]:
-        _heading2(doc, LABELS_GRUPOS.get(grupo, grupo))
+        _heading2(doc, _label_grupo(grupo))
         for mes in dados["meses"]:
             _cardapio_grupo_mes(doc, dados, grupo, mes)
         _quebra_pagina(doc)
@@ -615,7 +661,7 @@ def _secao_conformidade(doc, dados: dict):
     df_conf = dados["conformidade"]
 
     for grupo in dados["grupos"]:
-        _heading2(doc, LABELS_GRUPOS.get(grupo, grupo))
+        _heading2(doc, _label_grupo(grupo))
         df_g = df_conf[df_conf["grupo"] == grupo]
 
         for mes in sorted(df_g["mes"].unique()):
@@ -704,7 +750,7 @@ def _secao_af(doc, dados: dict):
         pct_str      = f"{pct_af:.1f} %"              if pct_af            > 0 else "—"
 
         tr = tbl.add_row()
-        label = LABELS_GRUPOS.get(row["grupo"], row["grupo"])
+        label = _label_grupo(row["grupo"])
         _celula_dado(tr.cells[0], label,                      fundo, negrito=True)
         _celula_dado(tr.cells[1], NOMES_MESES.get(int(row["mes"]), str(row["mes"])),
                      fundo, alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
