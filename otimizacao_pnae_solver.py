@@ -29,6 +29,7 @@ Tempo esperado por instância: 10–60 s no CBC em modo padrão.
 
 # ── Imports ───────────────────────────────────────────────────────────────────
 import os
+import ast
 import json
 import logging
 import warnings
@@ -315,9 +316,27 @@ def aplicar_sazonalidade(df: pd.DataFrame, df_saz: pd.DataFrame, mes: int) -> pd
         return df_out
 
     # Extrair índice do mês (stored como dict ou string)
+    # CORREÇÃO (set/2026): sazonalidade_por_produto.csv gerado pelo Módulo 3
+    # antes da correção do Bloco 17 grava 'indice_sazonal_por_mes' como repr
+    # Python de dict com chaves int (ex. "{1: 0.99, ...}") -- não é JSON
+    # válido, e json.loads() sempre lançava exceção, fazendo o fator sazonal
+    # cair no fallback 1.0 em 100% das linhas (sazonalidade nunca aplicada).
+    # Agora tenta json.loads() primeiro (formato correto, pós-correção do
+    # Módulo 3) e cai para ast.literal_eval() se falhar -- que interpreta
+    # literais Python nativamente (aceita chaves int sem aspas), garantindo
+    # compatibilidade com CSVs antigos já gerados no formato legado.
     def _get_indice(val):
+        if isinstance(val, dict):
+            d = val
+        else:
+            try:
+                d = json.loads(val)
+            except Exception:
+                try:
+                    d = ast.literal_eval(val)
+                except Exception:
+                    return 1.0
         try:
-            d = val if isinstance(val, dict) else json.loads(val.replace("'", '"'))
             return float(d.get(mes, d.get(str(mes), 1.0)))
         except Exception:
             return 1.0
@@ -1128,7 +1147,7 @@ def _salvar_parcial(res: ResultadoSolver, output_folder: str):
     """Salva CSV parcial de cada instância para recuperação em caso de falha."""
     if res.cardapio.empty:
         return
-    nome = f"cardapio_{res.grupo}_{res.mes:02d}.csv"
+    nome = f"cardapios/cardapio_{res.grupo}_{res.mes:02d}.csv"
     res.cardapio.to_csv(
         os.path.join(output_folder, nome),
         index=False, encoding="utf-8-sig",

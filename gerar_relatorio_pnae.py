@@ -139,6 +139,26 @@ def _label_grupo(codigo: str) -> str:
 # HELPERS DE FORMATAÇÃO
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _br(valor, casas: int = None) -> str:
+    """
+    Formata um número no padrão brasileiro (vírgula como separador decimal).
+
+    - Se `casas` for informado, força esse número de casas decimais
+      (ex.: _br(3.5, 2) -> "3,50").
+    - Caso contrário, preserva a representação padrão do valor (útil para
+      valores "crus" vindos diretamente do CSV, como 'limite' e
+      'pct_atingido'), apenas trocando "." por ",".
+
+    Usada em todo o relatório para que nenhum valor numérico seja exibido
+    com ponto decimal (padrão norte-americano) no documento final.
+    """
+    if casas is not None:
+        texto = f"{float(valor):.{casas}f}"
+    else:
+        texto = str(valor)
+    return texto.replace(".", ",")
+
+
 def _set_cell_bg(cell, hex_color: str):
     """Define cor de fundo de uma célula via XML."""
     tc   = cell._tc
@@ -485,9 +505,9 @@ def _apresentacao(doc, dados: dict):
         _celula_dado(tr.cells[2], "✅ Ótimo" if ok else "⚠ Parcial",
                      HEX_OK_FUNDO if ok else HEX_NOK_FUNDO,
                      alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
-        custo_str = f"R$ {row['custo_medio']:.4f}" if row["custo_medio"] > 0 else "—"
+        custo_str = f"R$ {_br(row['custo_medio'], 4)}" if row["custo_medio"] > 0 else "—"
         _celula_dado(tr.cells[3], custo_str,                fundo, alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
-        pct_str  = f"{row['pct_af_medio']:.1f} %" if row["pct_af_medio"] > 0 else "—"
+        pct_str  = f"{_br(row['pct_af_medio'], 1)} %" if row["pct_af_medio"] > 0 else "—"
         pct_fundo = HEX_AZUL_CLARO if row["pct_af_medio"] >= 45 else HEX_NOK_FUNDO
         _celula_dado(tr.cells[4], pct_str, pct_fundo, alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
         _celula_dado(tr.cells[5], int(row["n_alimentos"]),  fundo, alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
@@ -518,8 +538,8 @@ def _cardapio_grupo_mes(doc, dados: dict, grupo: str, mes: int):
         p_ind = doc.add_paragraph()
         p_ind.paragraph_format.space_after = Pt(6)
         for txt, negrito in [
-            (f"Custo total do mês: R$ {custo_mes:.4f}/aluno  ", True),
-            (f"|  AF: {pct_af:.1f}%  ", False),
+            (f"Custo total do mês: R$ {_br(custo_mes, 4)}/aluno  ", True),
+            (f"|  AF: {_br(pct_af, 1)}%  ", False),
             (f"|  {n_alim} alimentos distintos", False),
         ]:
             run = p_ind.add_run(txt)
@@ -580,9 +600,9 @@ def _cardapio_grupo_mes(doc, dados: dict, grupo: str, mes: int):
                              nome_dia if idx_item == 0 else "",
                              fundo, negrito=(idx_item == 0))
                 _celula_dado(tr.cells[1], str(item["alimento"])[:80], fundo)
-                _celula_dado(tr.cells[2], f"{item['qtd_g']:.1f}", fundo,
+                _celula_dado(tr.cells[2], _br(item['qtd_g'], 1), fundo,
                              alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
-                custo_str = f"{item['custo_r']:.4f}" if item["custo_r"] > 0 else "—"
+                custo_str = _br(item['custo_r'], 4) if item["custo_r"] > 0 else "—"
                 _celula_dado(tr.cells[3], custo_str, fundo,
                              alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
                 cat_str = str(item.get("categoria", "")).replace("_", " ").title()
@@ -689,12 +709,12 @@ def _secao_conformidade(doc, dados: dict):
                 tr = tbl.add_row()
                 _celula_dado(tr.cells[0], row["nutriente"],       fundo, negrito=True)
                 _celula_dado(tr.cells[1],
-                             f"{row['valor_medio_dia']:.3f} {row['unidade']}",
+                             f"{_br(row['valor_medio_dia'], 3)} {row['unidade']}",
                              fundo, alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
                 _celula_dado(tr.cells[2],
-                             f"{row['limite']} {row['unidade']}",
+                             f"{_br(row['limite'])} {row['unidade']}",
                              fundo, alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
-                pct_str = f"{row['pct_atingido']} %" if str(row['pct_atingido']) != "N/D" else "N/D"
+                pct_str = f"{_br(row['pct_atingido'])} %" if str(row['pct_atingido']) != "N/D" else "N/D"
                 _celula_dado(tr.cells[3], pct_str, fundo,
                              alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
                 status_label = "✅ Conforme" if ok else "❌ Não conforme"
@@ -745,9 +765,9 @@ def _secao_af(doc, dados: dict):
         pct_af    = float(row.get("pct_af_pct", 0))
         ok_af     = pct_af >= 45 or bool(row.get("meta_af_ok", False))
 
-        custo_str    = f"R$ {row['custo_total']:.4f}" if row["custo_total"] > 0 else "—"
-        custo_af_str = f"R$ {row['custo_af']:.4f}"   if row["custo_af"]    > 0 else "—"
-        pct_str      = f"{pct_af:.1f} %"              if pct_af            > 0 else "—"
+        custo_str    = f"R$ {_br(row['custo_total'], 4)}" if row["custo_total"] > 0 else "—"
+        custo_af_str = f"R$ {_br(row['custo_af'], 4)}"    if row["custo_af"]    > 0 else "—"
+        pct_str      = f"{_br(pct_af, 1)} %"               if pct_af            > 0 else "—"
 
         tr = tbl.add_row()
         label = _label_grupo(row["grupo"])
