@@ -467,9 +467,10 @@ def _apresentacao(doc, dados: dict):
 
     _nota_metodologica(
         doc,
-        "Janeiro é excluído do planejamento por ser mês de férias escolares no calendário "
-        "letivo municipal de Salvador-BA. O planejamento cobre os meses de fevereiro a "
-        "dezembro (11 meses letivos × 20 dias úteis = 220 dias por grupo nutricional)."
+        "Janeiro e junho são excluídos do planejamento, considerando período de férias "
+        "escolares em calendário letivo municipal regular. O planejamento cobre assim, "
+        "10 meses letivos x 20 dias, totalizando 200 dias por grupo nutricional. O " 
+        "calendário praticado em si depende de cada município e sofre alterações."
     )
 
     # Tabela resumo executivo dos grupos processados
@@ -505,7 +506,7 @@ def _apresentacao(doc, dados: dict):
         _celula_dado(tr.cells[2], "✅ Ótimo" if ok else "⚠ Parcial",
                      HEX_OK_FUNDO if ok else HEX_NOK_FUNDO,
                      alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
-        custo_str = f"R$ {_br(row['custo_medio'], 4)}" if row["custo_medio"] > 0 else "—"
+        custo_str = f"R$ {_br(row['custo_medio'], 2)}" if row["custo_medio"] > 0 else "—"
         _celula_dado(tr.cells[3], custo_str,                fundo, alinhamento=WD_ALIGN_PARAGRAPH.CENTER)
         pct_str  = f"{_br(row['pct_af_medio'], 1)} %" if row["pct_af_medio"] > 0 else "—"
         pct_fundo = HEX_AZUL_CLARO if row["pct_af_medio"] >= 45 else HEX_NOK_FUNDO
@@ -538,7 +539,7 @@ def _cardapio_grupo_mes(doc, dados: dict, grupo: str, mes: int):
         p_ind = doc.add_paragraph()
         p_ind.paragraph_format.space_after = Pt(6)
         for txt, negrito in [
-            (f"Custo total do mês: R$ {_br(custo_mes, 4)}/aluno  ", True),
+            (f"Custo total do mês: R$ {_br(custo_mes, 2)}/aluno  ", True),
             (f"|  AF: {_br(pct_af, 1)}%  ", False),
             (f"|  {n_alim} alimentos distintos", False),
         ]:
@@ -765,8 +766,8 @@ def _secao_af(doc, dados: dict):
         pct_af    = float(row.get("pct_af_pct", 0))
         ok_af     = pct_af >= 45 or bool(row.get("meta_af_ok", False))
 
-        custo_str    = f"R$ {_br(row['custo_total'], 4)}" if row["custo_total"] > 0 else "—"
-        custo_af_str = f"R$ {_br(row['custo_af'], 4)}"    if row["custo_af"]    > 0 else "—"
+        custo_str    = f"R$ {_br(row['custo_total'], 2)}" if row["custo_total"] > 0 else "—"
+        custo_af_str = f"R$ {_br(row['custo_af'], 2)}"    if row["custo_af"]    > 0 else "—"
         pct_str      = f"{_br(pct_af, 1)} %"               if pct_af            > 0 else "—"
 
         tr = tbl.add_row()
