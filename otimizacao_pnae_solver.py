@@ -160,7 +160,12 @@ def preparar_dataset_solver(dados: dict) -> pd.DataFrame:
         None,
     )
     if col_join:
-        cols_trazer = [c for c in ["preco_kg_referencia","is_af","confianca_af"]
+        # CORREÇÃO (set/2026): "confianca_af" foi renomeada para "base_af" no
+        # Módulo 3 (rastreabilidade pgpm/heuristico/nao_verificavel). A lista
+        # antiga referenciava o nome obsoleto, que nunca mais existiu em
+        # df_precos.columns — o filtro abaixo descartava a coluna em silêncio,
+        # sem erro, e "base_af" nunca chegava ao dataset do solver.
+        cols_trazer = [c for c in ["preco_kg_referencia","is_af","base_af"]
                        if c in df_precos.columns]
         df = df.merge(
             df_precos[[col_join] + cols_trazer].drop_duplicates(col_join),
